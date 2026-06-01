@@ -39,7 +39,6 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 from util.kd_loss import DistillationLoss
 
 import models
-import models_sew
 
 from engine_finetune import train_one_epoch, evaluate
 from timm.data import create_loader
@@ -390,7 +389,7 @@ def main(args):
     if args.model_mode == "ms":
         model = models.__dict__[args.model](kd=args.kd)
     elif args.model_mode == "sew":
-        model = models_sew.__dict__[args.model]()
+        model = models.__dict__[args.model]()
     model.T = args.time_steps
 
     if args.finetune and not args.eval:
