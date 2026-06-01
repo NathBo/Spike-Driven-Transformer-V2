@@ -22,10 +22,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from timm.models.layers import trunc_normal_, DropPath
-from timm.models.registry import register_model
+from timm.layers import trunc_normal_, DropPath
+from timm.models import register_model
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.models.layers import to_2tuple
+from timm.layers import to_2tuple
+
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Overwriting .* in registry .*",
+    category=UserWarning,
+)
 
 
 def _cfg(url="", **kwargs):
