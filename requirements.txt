@@ -4,3 +4,4 @@ torchinfo
 einops
 timm
 tensorboard
+cupy
