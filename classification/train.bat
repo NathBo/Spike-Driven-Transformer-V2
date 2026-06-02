@@ -1,0 +1,1 @@
+python main_finetune.py --batch_size 128 --blr 6e-4 --warmup_epochs 10 --epochs 200 --model metaspikformer_8_512 --data_path flowers102_imagenet_like/ --output_dir outputs/55M --log_dir outputs/55M --model_mode ms --dist_eval

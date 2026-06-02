@@ -4,3 +4,4 @@ __pycache__/
 outputs/
 *.pth
 venv/*
+*flowers102_imagenet_like*
