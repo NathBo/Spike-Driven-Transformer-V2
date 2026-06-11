@@ -5,3 +5,4 @@ einops
 timm==0.5.4
 tensorboard
 cupy
+kagglehub
