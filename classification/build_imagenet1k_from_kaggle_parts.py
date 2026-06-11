@@ -1,125 +1,92 @@
+# file: scripts/build_imagenet1k_kaggle_numeric.py
+
 from __future__ import annotations
 
 import json
 import shutil
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, Iterator
 
 import kagglehub
 
 
-DATASETS: dict[str, str] = {
-    "train_part_0": "sautkin/imagenet1k0",
-    "train_part_1": "sautkin/imagenet1k1",
-    "train_part_2": "sautkin/imagenet1k2",
-    "train_part_3": "sautkin/imagenet1k3",
+DATASETS = {
+    "train_0_499_a": "sautkin/imagenet1k0",
+    "train_500_999_a": "sautkin/imagenet1k1",
+    "train_0_499_b": "sautkin/imagenet1k2",
+    "train_500_999_b": "sautkin/imagenet1k3",
     "val": "sautkin/imagenet1kvalid",
 }
 
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png", ".bmp", ".webp"}
 
 
-def is_class_dir(path: Path) -> bool:
-    return path.is_dir() and path.name.startswith("n") and len(path.name) >= 9
+def download_dataset(dataset_ref: str) -> Path:
+    return Path(kagglehub.dataset_download(dataset_ref))
 
 
-def is_image_file(path: Path) -> bool:
+def is_image(path: Path) -> bool:
     return path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
 
 
-def find_class_dirs(root: Path) -> list[Path]:
-    class_dirs: list[Path] = []
-
-    if is_class_dir(root):
-        return [root]
-
-    for path in root.rglob("*"):
-        if is_class_dir(path):
-            class_dirs.append(path)
-
-    unique = sorted({path.resolve() for path in class_dirs})
-    return [Path(p) for p in unique]
+def list_numeric_class_dirs(root: Path) -> list[Path]:
+    class_dirs = [p for p in root.iterdir() if p.is_dir() and p.name.isdigit()]
+    return sorted(class_dirs, key=lambda p: int(p.name))
 
 
-def iter_images_in_class_dir(class_dir: Path) -> Iterator[Path]:
-    for path in sorted(class_dir.rglob("*")):
-        if is_image_file(path):
-            yield path
-
-
-def safe_copy(src: Path, dst_dir: Path, prefix: str | None = None) -> Path:
+def copy_images(src_dir: Path, dst_dir: Path, prefix: str | None = None) -> int:
     dst_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
 
-    base_name = src.name
-    if prefix:
-        base_name = f"{prefix}_{base_name}"
+    for image_path in sorted(src_dir.rglob("*")):
+        if not is_image(image_path):
+            continue
 
-    candidate = dst_dir / base_name
-    if not candidate.exists():
-        shutil.copy2(src, candidate)
-        return candidate
+        filename = image_path.name if prefix is None else f"{prefix}_{image_path.name}"
+        dst_path = dst_dir / filename
 
-    stem = Path(base_name).stem
-    suffix = Path(base_name).suffix
-    index = 1
-    while True:
-        candidate = dst_dir / f"{stem}_{index}{suffix}"
-        if not candidate.exists():
-            shutil.copy2(src, candidate)
-            return candidate
-        index += 1
+        if dst_path.exists():
+            stem = dst_path.stem
+            suffix = dst_path.suffix
+            index = 1
+            while True:
+                candidate = dst_dir / f"{stem}_{index}{suffix}"
+                if not candidate.exists():
+                    dst_path = candidate
+                    break
+                index += 1
+
+        shutil.copy2(image_path, dst_path)
+        copied += 1
+
+    return copied
 
 
-def download_dataset(dataset_ref: str) -> Path:
-    path = kagglehub.dataset_download(dataset_ref)
-    return Path(path)
-
-
-def collect_split(
-    split_name: str,
-    source_roots: Iterable[Path],
+def merge_sources_to_split(
     output_root: Path,
+    split_name: str,
+    sources: list[tuple[str, Path]],
 ) -> dict[str, int]:
-    counts: dict[str, int] = defaultdict(int)
     split_root = output_root / split_name
     split_root.mkdir(parents=True, exist_ok=True)
 
-    for source_index, source_root in enumerate(source_roots):
-        class_dirs = find_class_dirs(source_root)
-        if not class_dirs:
-            print(f"[WARN] Aucune classe détectée dans: {source_root}")
-            continue
+    counts: dict[str, int] = defaultdict(int)
 
-        print(f"[INFO] {split_name}: {len(class_dirs)} classes trouvées dans {source_root}")
+    for source_tag, source_root in sources:
+        class_dirs = list_numeric_class_dirs(source_root)
+        print(f"[INFO] {source_tag}: {len(class_dirs)} classes trouvées dans {source_root}")
 
         for class_dir in class_dirs:
-            wnid = class_dir.name
-            target_class_dir = split_root / wnid
+            class_name = class_dir.name
+            target_class_dir = split_root / class_name
+            copied = copy_images(
+                src_dir=class_dir,
+                dst_dir=target_class_dir,
+                prefix=source_tag if split_name == "train" else None,
+            )
+            counts[class_name] += copied
 
-            image_count_before = counts[wnid]
-            copied_here = 0
-
-            for image_path in iter_images_in_class_dir(class_dir):
-                safe_copy(
-                    src=image_path,
-                    dst_dir=target_class_dir,
-                    prefix=f"p{source_index}" if split_name == "train" else None,
-                )
-                counts[wnid] += 1
-                copied_here += 1
-
-            if copied_here == 0:
-                print(f"[WARN] Pas d'images trouvées dans {class_dir}")
-            elif image_count_before == 0:
-                print(f"[INFO] {split_name}/{wnid}: {copied_here} images")
-            else:
-                print(
-                    f"[INFO] {split_name}/{wnid}: +{copied_here} images "
-                    f"(total {counts[wnid]})"
-                )
-
-    return dict(sorted(counts.items()))
+    return dict(sorted(counts.items(), key=lambda kv: int(kv[0])))
 
 
 def write_manifest(
@@ -144,75 +111,50 @@ def write_manifest(
         },
     }
 
-    manifest_path = output_root / "manifest.json"
-    manifest_path.write_text(
+    (output_root / "manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
-
-
-def print_summary(output_root: Path, train_counts: dict[str, int], val_counts: dict[str, int]) -> None:
-    print("\n=== Résumé ===")
-    print(f"Output root : {output_root.resolve()}")
-    print(f"Train classes: {len(train_counts)}")
-    print(f"Train images : {sum(train_counts.values())}")
-    print(f"Val classes  : {len(val_counts)}")
-    print(f"Val images   : {sum(val_counts.values())}")
-
-    missing_in_val = sorted(set(train_counts) - set(val_counts))
-    missing_in_train = sorted(set(val_counts) - set(train_counts))
-
-    if missing_in_val:
-        print(f"[WARN] Classes absentes de val: {len(missing_in_val)}")
-    if missing_in_train:
-        print(f"[WARN] Classes absentes de train: {len(missing_in_train)}")
-
-    print("\nStructure attendue :")
-    print(output_root / "train")
-    print(output_root / "val")
-    print(output_root / "manifest.json")
 
 
 def main() -> None:
     output_root = Path("imagenet_kaggle")
     output_root.mkdir(parents=True, exist_ok=True)
 
-    print("[INFO] Téléchargement des datasets Kaggle...")
-    downloaded_paths: dict[str, Path] = {}
-    for key, dataset_ref in DATASETS.items():
-        path = download_dataset(dataset_ref)
-        downloaded_paths[key] = path
-        print(f"[INFO] {dataset_ref} -> {path}")
+    print("[INFO] Téléchargement / réutilisation du cache Kaggle...")
+    downloaded = {name: download_dataset(ref) for name, ref in DATASETS.items()}
+    for name, path in downloaded.items():
+        print(f"[INFO] {name}: {path}")
 
     train_sources = [
-        downloaded_paths["train_part_0"],
-        downloaded_paths["train_part_1"],
-        downloaded_paths["train_part_2"],
-        downloaded_paths["train_part_3"],
+        ("part0", downloaded["train_0_499_a"]),
+        ("part1", downloaded["train_500_999_a"]),
+        ("part2", downloaded["train_0_499_b"]),
+        ("part3", downloaded["train_500_999_b"]),
     ]
-    val_sources = [downloaded_paths["val"]]
+    val_sources = [
+        ("val", downloaded["val"]),
+    ]
 
-    print("\n[INFO] Reconstruction du split train...")
-    train_counts = collect_split(
-        split_name="train",
-        source_roots=train_sources,
-        output_root=output_root,
-    )
+    print("\n[INFO] Construction du train/")
+    train_counts = merge_sources_to_split(output_root, "train", train_sources)
 
-    print("\n[INFO] Reconstruction du split val...")
-    val_counts = collect_split(
-        split_name="val",
-        source_roots=val_sources,
-        output_root=output_root,
-    )
+    print("\n[INFO] Construction du val/")
+    val_counts = merge_sources_to_split(output_root, "val", val_sources)
 
     write_manifest(
         output_root=output_root,
-        downloads={k: str(v) for k, v in downloaded_paths.items()},
+        downloads={k: str(v) for k, v in downloaded.items()},
         train_counts=train_counts,
         val_counts=val_counts,
     )
-    print_summary(output_root, train_counts, val_counts)
+
+    print("\n=== Résumé ===")
+    print(f"Train classes: {len(train_counts)}")
+    print(f"Train images : {sum(train_counts.values())}")
+    print(f"Val classes  : {len(val_counts)}")
+    print(f"Val images   : {sum(val_counts.values())}")
+    print(f"Output       : {output_root.resolve()}")
 
 
 if __name__ == "__main__":
