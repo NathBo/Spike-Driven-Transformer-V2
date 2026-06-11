@@ -564,6 +564,7 @@ class Spiking_vit_MetaFormer(nn.Module):
 
 
 def metaspikformer_8_384(**kwargs):
+    num_classes = kwargs.pop("num_classes", 1000)
     model = Spiking_vit_MetaFormer(
         img_size_h=224,
         img_size_w=224,
@@ -572,7 +573,7 @@ def metaspikformer_8_384(**kwargs):
         num_heads=8,
         mlp_ratios=4,
         in_channels=3,
-        num_classes=1000,
+        num_classes=num_classes,
         qkv_bias=False,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         depths=8,
@@ -583,6 +584,7 @@ def metaspikformer_8_384(**kwargs):
 
 
 def metaspikformer_8_512(**kwargs):
+    num_classes = kwargs.pop("num_classes", 1000)
     model = Spiking_vit_MetaFormer(
         img_size_h=224,
         img_size_w=224,
@@ -591,7 +593,7 @@ def metaspikformer_8_512(**kwargs):
         num_heads=8,
         mlp_ratios=4,
         in_channels=3,
-        num_classes=1000,
+        num_classes=num_classes,
         qkv_bias=False,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         depths=8,
@@ -602,6 +604,7 @@ def metaspikformer_8_512(**kwargs):
 
 
 def metaspikformer_8_768(**kwargs):
+    num_classes = kwargs.pop("num_classes", 1000)
     model = Spiking_vit_MetaFormer(
         img_size_h=224,
         img_size_w=224,
@@ -610,7 +613,7 @@ def metaspikformer_8_768(**kwargs):
         num_heads=8,
         mlp_ratios=4,
         in_channels=3,
-        num_classes=1000,
+        num_classes=num_classes,
         qkv_bias=False,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         depths=8,

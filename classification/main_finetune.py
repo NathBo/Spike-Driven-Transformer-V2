@@ -387,7 +387,7 @@ def main(args):
         )
 
     if args.model_mode == "ms":
-        model = models.__dict__[args.model](kd=args.kd)
+        model = models.__dict__[args.model](kd=args.kd, num_classes=args.nb_classes)
     elif args.model_mode == "sew":
         model = models.__dict__[args.model]()
     model.T = args.time_steps
