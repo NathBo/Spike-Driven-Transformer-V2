@@ -1,4 +1,4 @@
-# file: scripts/build_imagenet1k_kaggle_numeric_fast.py
+# file: scripts/build_imagenet1k_kaggle_numeric_resume.py
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import shutil
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Iterable
 
 import kagglehub
 from tqdm import tqdm
@@ -39,7 +38,7 @@ def parse_args() -> argparse.Namespace:
         "--workers",
         default=min(32, (os.cpu_count() or 8)),
         type=int,
-        help="nombre de workers pour création/copie des fichiers",
+        help="nombre de workers",
     )
     parser.add_argument(
         "--force",
@@ -68,10 +67,12 @@ def iter_images(root: Path) -> list[Path]:
     return [p for p in sorted(root.rglob("*")) if is_image(p)]
 
 
-def ensure_empty_dir(path: Path, force: bool) -> None:
-    if path.exists() and force:
-        shutil.rmtree(path)
-    path.mkdir(parents=True, exist_ok=True)
+def ensure_output_dirs(output_root: Path, force: bool) -> None:
+    if force and output_root.exists():
+        shutil.rmtree(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+    (output_root / "train").mkdir(parents=True, exist_ok=True)
+    (output_root / "val").mkdir(parents=True, exist_ok=True)
 
 
 def materialize_file(src: Path, dst: Path, mode: str) -> None:
@@ -100,9 +101,9 @@ def build_tasks_for_sources(
     sources: list[tuple[str, Path]],
     output_root: Path,
 ) -> tuple[list[tuple[Path, Path]], dict[str, int]]:
-    tasks: list[tuple[Path, Path]] = []
-    counts: dict[str, int] = defaultdict(int)
     split_root = output_root / split_name
+    all_tasks: list[tuple[Path, Path]] = []
+    counts: dict[str, int] = defaultdict(int)
 
     for source_tag, source_root in sources:
         class_dirs = list_numeric_class_dirs(source_root)
@@ -115,10 +116,23 @@ def build_tasks_for_sources(
             for src in images:
                 filename = src.name if split_name == "val" else f"{source_tag}_{src.name}"
                 dst = split_root / class_name / filename
-                tasks.append((src, dst))
+                all_tasks.append((src, dst))
                 counts[class_name] += 1
 
-    return tasks, dict(sorted(counts.items(), key=lambda kv: int(kv[0])))
+    return all_tasks, dict(sorted(counts.items(), key=lambda kv: int(kv[0])))
+
+
+def summarize_existing(tasks: list[tuple[Path, Path]]) -> tuple[int, int, list[tuple[Path, Path]]]:
+    existing = 0
+    pending: list[tuple[Path, Path]] = []
+
+    for src, dst in tasks:
+        if dst.exists():
+            existing += 1
+        else:
+            pending.append((src, dst))
+
+    return existing, len(tasks), pending
 
 
 def execute_tasks(
@@ -164,20 +178,20 @@ def write_manifest(
     )
 
 
+def print_resume_info(split_name: str, existing: int, total: int) -> None:
+    pending = total - existing
+    pct = 100.0 if total == 0 else 100.0 * existing / total
+    print(
+        f"[INFO] {split_name}: {existing}/{total} déjà présents "
+        f"({pct:.1f}%), reste {pending} à créer"
+    )
+
+
 def main() -> None:
     args = parse_args()
     output_root = Path(args.output_root)
 
-    if output_root.exists() and not args.force:
-        manifest = output_root / "manifest.json"
-        if manifest.exists():
-            print(f"[INFO] {output_root.resolve()} existe déjà.")
-            print("[INFO] Utilise --force pour reconstruire.")
-            return
-
-    ensure_empty_dir(output_root, force=args.force)
-    ensure_empty_dir(output_root / "train", force=False)
-    ensure_empty_dir(output_root / "val", force=False)
+    ensure_output_dirs(output_root, force=args.force)
 
     print("[INFO] Téléchargement / réutilisation du cache KaggleHub...")
     downloaded = {name: download_dataset(ref) for name, ref in DATASETS.items()}
@@ -206,21 +220,32 @@ def main() -> None:
         output_root=output_root,
     )
 
-    print(f"\n[INFO] Reconstruction train ({args.mode})...")
-    execute_tasks(
-        tasks=train_tasks,
-        mode=args.mode,
-        workers=args.workers,
-        desc="train",
-    )
+    train_existing, train_total, train_pending = summarize_existing(train_tasks)
+    val_existing, val_total, val_pending = summarize_existing(val_tasks)
 
-    print(f"[INFO] Reconstruction val ({args.mode})...")
-    execute_tasks(
-        tasks=val_tasks,
-        mode=args.mode,
-        workers=args.workers,
-        desc="val",
-    )
+    print_resume_info("train", train_existing, train_total)
+    print_resume_info("val", val_existing, val_total)
+
+    if not train_pending and not val_pending:
+        print("[INFO] Rien à faire, le dataset reconstruit semble déjà complet.")
+    else:
+        if train_pending:
+            print(f"\n[INFO] Reconstruction train ({args.mode})...")
+            execute_tasks(
+                tasks=train_pending,
+                mode=args.mode,
+                workers=args.workers,
+                desc="train",
+            )
+
+        if val_pending:
+            print(f"[INFO] Reconstruction val ({args.mode})...")
+            execute_tasks(
+                tasks=val_pending,
+                mode=args.mode,
+                workers=args.workers,
+                desc="val",
+            )
 
     write_manifest(
         output_root=output_root,
