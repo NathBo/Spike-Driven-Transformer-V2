@@ -5,3 +5,5 @@ outputs/
 *.pth
 venv/*
 *flowers102_imagenet_like*
+classification/data/*
+classification/imagenet_kaggle/*
