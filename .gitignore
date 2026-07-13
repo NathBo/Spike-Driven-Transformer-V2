@@ -3,6 +3,7 @@ __pycache__/
 *M.sh
 outputs/
 *.pth
+*.log
 venv/*
 *flowers102_imagenet_like*
 classification/data/*
