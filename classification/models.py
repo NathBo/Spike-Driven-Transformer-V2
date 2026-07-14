@@ -258,6 +258,20 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         N = H * W
 
         x = self.head_lif(x)
+        # Measure sparsity of head_lif output: fraction of zero elements
+        try:
+            sparsity = (x == 0).float().mean()
+            # store last sparsity as a CPU tensor and append to simple log list
+            self.last_head_lif_sparsity = sparsity.detach().cpu()
+            if not hasattr(self, "head_lif_sparsity_log"):
+                self.head_lif_sparsity_log = []
+            # append scalar float
+            self.head_lif_sparsity_log.append(float(self.last_head_lif_sparsity.item()))
+            # quick console output for inspection
+            print(f"[MS_Attention] head_lif sparsity (zeros fraction): {self.last_head_lif_sparsity.item():.4f}")
+        except Exception:
+            # don't break forward pass if logging fails
+            pass
 
         q = self.q_conv(x.flatten(0, 1)).reshape(T, B, C, H, W)
         k = self.k_conv(x.flatten(0, 1)).reshape(T, B, C, H, W)
