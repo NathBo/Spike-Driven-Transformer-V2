@@ -259,17 +259,17 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         N = H * W
 
         x = self.head_lif(x)
-        # Measure sparsity of head_lif output: fraction of zero elements
+        # Measure firing rate of head_lif output: fraction of non-zero (spikes)
         try:
-            sparsity = (x == 0).float().mean()
-            # store last sparsity as a CPU tensor and append to simple log list
-            self.last_head_lif_sparsity = sparsity.detach().cpu()
-            if not hasattr(self, "head_lif_sparsity_log"):
-                self.head_lif_sparsity_log = []
+            firing_rate = (x != 0).float().mean()
+            # store last firing rate as a CPU tensor and append to simple log list
+            self.last_head_lif_firing_rate = firing_rate.detach().cpu()
+            if not hasattr(self, "head_lif_firing_rate_log"):
+                self.head_lif_firing_rate_log = []
             # append scalar float
-            self.head_lif_sparsity_log.append(float(self.last_head_lif_sparsity.item()))
+            self.head_lif_firing_rate_log.append(float(self.last_head_lif_firing_rate.item()))
             # quick console output for inspection
-            print(f"[MS_Attention] head_lif sparsity (zeros fraction): {self.last_head_lif_sparsity.item():.4f}")
+            print(f"[MS_Attention] head_lif firing rate (fraction): {self.last_head_lif_firing_rate.item():.4f}")
         except Exception:
             # don't break forward pass if logging fails
             pass
@@ -641,31 +641,31 @@ def metaspikformer_8_768(**kwargs):
 from timm.models import create_model
 
 
-def plot_sparsity_by_block(model, out_dir="graphics", filename="sparsity_by_block.png"):
-    """Collect average head_lif sparsity from all MS_Attention_RepConv_qkv_id
-    modules in `model` and save a bar plot to `out_dir/filename`.
-    This is an ad-hoc helper for inspection; matplotlib is imported lazily.
+def plot_firing_rate_by_block(model, out_dir="graphics", filename="firing_rate_by_block.png"):
+    """Collect average head_lif firing rate from all MS_Attention_RepConv_qkv_id
+    modules in `model` and save a bar plot to `out_dir/filename` with values
+    printed above each bar. Matplotlib is imported lazily.
     """
     try:
         import matplotlib.pyplot as plt
     except Exception as e:
-        print("plot_sparsity_by_block: matplotlib not available:", e)
+        print("plot_firing_rate_by_block: matplotlib not available:", e)
         return None
 
     # gather attention modules
     attn_modules = [m for m in model.modules() if isinstance(m, MS_Attention_RepConv_qkv_id)]
     if len(attn_modules) == 0:
-        print("plot_sparsity_by_block: no MS_Attention_RepConv_qkv_id modules found in model")
+        print("plot_firing_rate_by_block: no MS_Attention_RepConv_qkv_id modules found in model")
         return None
 
     means = []
     labels = []
     for idx, m in enumerate(attn_modules):
-        logs = getattr(m, "head_lif_sparsity_log", None)
+        logs = getattr(m, "head_lif_firing_rate_log", None)
         if logs and len(logs) > 0:
             mean_val = float(sum(logs) / len(logs))
         else:
-            last = getattr(m, "last_head_lif_sparsity", None)
+            last = getattr(m, "last_head_lif_firing_rate", None)
             try:
                 mean_val = float(last) if last is not None else 0.0
             except Exception:
@@ -676,18 +676,31 @@ def plot_sparsity_by_block(model, out_dir="graphics", filename="sparsity_by_bloc
     os.makedirs(out_dir, exist_ok=True)
 
     plt.figure(figsize=(max(6, len(means) * 0.6), 4))
-    plt.bar(labels, means, color="tab:blue")
-    plt.ylabel("Sparsity (zeros fraction)")
+    bars = plt.bar(labels, means, color="tab:blue")
+    plt.ylabel("Firing rate (fraction)")
     plt.xlabel("Attention module")
-    plt.title("Average head_lif sparsity per attention module")
+    plt.title("Average head_lif firing rate per attention module")
     plt.ylim(0.0, 1.0)
     plt.xticks(rotation=45, ha="right")
+
+    # annotate values above bars
+    for bar, val in zip(bars, means):
+        height = bar.get_height()
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            height + 0.01,
+            f"{val:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+
     plt.tight_layout()
 
     out_path = os.path.join(out_dir, filename)
     plt.savefig(out_path)
     plt.close()
 
-    print(f"Saved sparsity plot to {out_path}")
+    print(f"Saved firing rate plot to {out_path}")
     return out_path
 
