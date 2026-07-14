@@ -497,6 +497,14 @@ def main(args):
         print(
             f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%"
         )
+        # generate sparsity plot per attention block (saved to <output_dir>/graphics)
+        try:
+            out_base = args.output_dir if args.output_dir else "."
+            out_graphics = os.path.join(out_base, "graphics")
+            models.plot_sparsity_by_block(model_without_ddp, out_dir=out_graphics)
+        except Exception as e:
+            print("Failed to generate sparsity plot:", e)
+
         exit(0)
 
     print(f"Start training for {args.epochs} epochs")
