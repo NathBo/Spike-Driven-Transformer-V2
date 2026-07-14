@@ -4,7 +4,7 @@ srun python -m torch.distributed.run --nproc_per_node=8 --master_addr=127.0.0.1 
 
 srun python -m torch.distributed.run --nproc_per_node=1 --master_addr=127.0.0.1 --master_port=29500 main_finetune.py --batch_size 32 --blr 6e-4 --warmup_epochs 0 --epochs 200 --model metaspikformer_8_512 --data_path imagenet_kaggle/ --output_dir outputs/55M --log_dir outputs/55M --model_mode ms --dist_eval --num_workers 8 --nb_classes 1000
 
-srun python -m torch.distributed.run --nproc_per_node=1 --master_addr=127.0.0.1 --master_port=29500 main_finetune.py --batch_size 32 --model metaspikformer_8_512 --data_path flowers102_imagenet_like/ --eval --resume checkpoint-2243.pth --output_dir outputs/trash --nb_classes 102
+srun python -m torch.distributed.run --nproc_per_node=1 --master_addr=127.0.0.1 --master_port=29500 main_finetune.py --batch_size 32 --model metaspikformer_8_512 --data_path flowers102_imagenet_like/ --eval --resume outputs/55M/checkpoint-2243.pth --output_dir outputs/trash --nb_classes 102
 
 # ajuster nproc_per_node en fonction de ce qu'on a de dispo
 

@@ -658,38 +658,51 @@ def plot_firing_rate_by_block(model, out_dir="graphics", filename="firing_rate_b
         print("plot_firing_rate_by_block: no MS_Attention_RepConv_qkv_id modules found in model")
         return None
 
+    import statistics
+
     means = []
+    stds = []
     labels = []
     for idx, m in enumerate(attn_modules):
         logs = getattr(m, "head_lif_firing_rate_log", None)
         if logs and len(logs) > 0:
-            mean_val = float(sum(logs) / len(logs))
+            try:
+                mean_val = float(statistics.mean(logs))
+                std_val = float(statistics.pstdev(logs)) if len(logs) > 1 else 0.0
+            except Exception:
+                mean_val = float(sum(logs) / len(logs))
+                # fallback population std
+                std_val = float((sum((x - mean_val) ** 2 for x in logs) / len(logs)) ** 0.5)
         else:
             last = getattr(m, "last_head_lif_firing_rate", None)
             try:
                 mean_val = float(last) if last is not None else 0.0
             except Exception:
                 mean_val = 0.0
+            std_val = 0.0
+
         means.append(mean_val)
+        stds.append(std_val)
         labels.append(f"attn_{idx}")
 
     os.makedirs(out_dir, exist_ok=True)
 
     plt.figure(figsize=(max(6, len(means) * 0.6), 4))
-    bars = plt.bar(labels, means, color="tab:blue")
+    bars = plt.bar(labels, means, color="tab:blue", yerr=stds, capsize=4, error_kw={"elinewidth":1, "alpha":0.8})
     plt.ylabel("Firing rate (fraction)")
     plt.xlabel("Attention module")
     plt.title("Average head_lif firing rate per attention module")
     plt.ylim(0.0, 1.0)
     plt.xticks(rotation=45, ha="right")
 
-    # annotate values above bars
-    for bar, val in zip(bars, means):
+    # annotate values above bars with mean ± std
+    for bar, mean_val, std_val in zip(bars, means, stds):
         height = bar.get_height()
+        label = f"{mean_val:.3f}±{std_val:.3f}" if std_val > 0 else f"{mean_val:.3f}"
         plt.text(
             bar.get_x() + bar.get_width() / 2,
-            height + 0.01,
-            f"{val:.3f}",
+            height + max(0.01, 0.02 * (1.0 if height == 0 else height)),
+            label,
             ha="center",
             va="bottom",
             fontsize=8,

@@ -499,8 +499,8 @@ def main(args):
         )
         # generate sparsity plot per attention block (saved to <output_dir>/graphics)
         try:
-            out_base = args.output_dir if args.output_dir else "."
-            out_graphics = os.path.join(out_base, "graphics")
+            # always write to repository-level `graphics/` directory
+            out_graphics = "graphics"
             # plot firing rate per attention block with numeric labels above bars
             models.plot_firing_rate_by_block(model_without_ddp, out_dir=out_graphics)
         except Exception as e:
