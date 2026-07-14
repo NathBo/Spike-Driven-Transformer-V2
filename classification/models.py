@@ -13,6 +13,7 @@ from timm.models.vision_transformer import _cfg
 from einops.layers.torch import Rearrange
 import torch.nn.functional as F
 from functools import partial
+import os
 
 
 class BNAndPadLayer(nn.Module):
@@ -638,4 +639,55 @@ def metaspikformer_8_768(**kwargs):
 
 
 from timm.models import create_model
+
+
+def plot_sparsity_by_block(model, out_dir="graphics", filename="sparsity_by_block.png"):
+    """Collect average head_lif sparsity from all MS_Attention_RepConv_qkv_id
+    modules in `model` and save a bar plot to `out_dir/filename`.
+    This is an ad-hoc helper for inspection; matplotlib is imported lazily.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        print("plot_sparsity_by_block: matplotlib not available:", e)
+        return None
+
+    # gather attention modules
+    attn_modules = [m for m in model.modules() if isinstance(m, MS_Attention_RepConv_qkv_id)]
+    if len(attn_modules) == 0:
+        print("plot_sparsity_by_block: no MS_Attention_RepConv_qkv_id modules found in model")
+        return None
+
+    means = []
+    labels = []
+    for idx, m in enumerate(attn_modules):
+        logs = getattr(m, "head_lif_sparsity_log", None)
+        if logs and len(logs) > 0:
+            mean_val = float(sum(logs) / len(logs))
+        else:
+            last = getattr(m, "last_head_lif_sparsity", None)
+            try:
+                mean_val = float(last) if last is not None else 0.0
+            except Exception:
+                mean_val = 0.0
+        means.append(mean_val)
+        labels.append(f"attn_{idx}")
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    plt.figure(figsize=(max(6, len(means) * 0.6), 4))
+    plt.bar(labels, means, color="tab:blue")
+    plt.ylabel("Sparsity (zeros fraction)")
+    plt.xlabel("Attention module")
+    plt.title("Average head_lif sparsity per attention module")
+    plt.ylim(0.0, 1.0)
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+
+    out_path = os.path.join(out_dir, filename)
+    plt.savefig(out_path)
+    plt.close()
+
+    print(f"Saved sparsity plot to {out_path}")
+    return out_path
 
