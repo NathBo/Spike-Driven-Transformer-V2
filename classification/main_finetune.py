@@ -497,14 +497,6 @@ def main(args):
         print(
             f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%"
         )
-        # generate sparsity plot per attention block (saved to <output_dir>/graphics)
-        try:
-            # always write to repository-level `graphics/` directory
-            out_graphics = "graphics"
-            # plot firing rate per attention block with numeric labels above bars
-            models.plot_firing_rate_by_block(model_without_ddp, out_dir=out_graphics)
-        except Exception as e:
-            print("Failed to generate firing rate plot:", e)
 
         exit(0)
 

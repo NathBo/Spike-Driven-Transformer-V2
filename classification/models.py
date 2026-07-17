@@ -16,6 +16,74 @@ from functools import partial
 import os
 
 
+def event_pointwise_conv_reference(x, conv):
+    """Reference implementation for a 1x1 event-wise convolution.
+
+    This function mirrors the mathematical effect of a 2D pointwise convolution
+    for binary input tensors by iterating over the non-zero events only. It is
+    intended as a correctness reference rather than an optimized implementation.
+
+    Args:
+        x: Input tensor of shape [B, Cin, H, W].
+        conv: A nn.Conv2d module with kernel_size=(1, 1), stride=(1, 1),
+            padding=(0, 0), dilation=(1, 1), and groups=1.
+
+    Returns:
+        A tensor of shape [B, Cout, H, W] containing the reference output.
+
+    Raises:
+        ValueError: If the input tensor or convolution configuration is invalid.
+    """
+    if not isinstance(conv, nn.Conv2d):
+        raise ValueError("conv must be an nn.Conv2d instance.")
+
+    if x.dim() != 4:
+        raise ValueError(f"x must be a 4D tensor of shape [B, Cin, H, W], got {tuple(x.shape)}")
+
+    if x.shape[1] != conv.in_channels:
+        raise ValueError(
+            f"x channels ({x.shape[1]}) do not match conv.in_channels ({conv.in_channels})."
+        )
+
+    expected_kernel_size = (1, 1)
+    expected_stride = (1, 1)
+    expected_padding = (0, 0)
+    expected_dilation = (1, 1)
+    if conv.kernel_size != expected_kernel_size:
+        raise ValueError(
+            f"conv.kernel_size must be {expected_kernel_size}, got {conv.kernel_size}."
+        )
+    if conv.stride != expected_stride:
+        raise ValueError(f"conv.stride must be {expected_stride}, got {conv.stride}.")
+    if conv.padding != expected_padding:
+        raise ValueError(f"conv.padding must be {expected_padding}, got {conv.padding}.")
+    if conv.dilation != expected_dilation:
+        raise ValueError(f"conv.dilation must be {expected_dilation}, got {conv.dilation}.")
+    if conv.groups != 1:
+        raise ValueError(f"conv.groups must be 1, got {conv.groups}.")
+
+    if x.device != conv.weight.device:
+        raise ValueError(
+            f"x and conv.weight must be on the same device, got {x.device} and {conv.weight.device}."
+        )
+
+    output = torch.zeros(
+        (x.shape[0], conv.out_channels, x.shape[2], x.shape[3]),
+        device=x.device,
+        dtype=conv.weight.dtype,
+    )
+    events = torch.nonzero(x, as_tuple=False)
+
+    for event in events:
+        batch_idx, channel_in_idx, row_idx, col_idx = event.tolist()
+        output[batch_idx, :, row_idx, col_idx] += conv.weight[:, channel_in_idx, 0, 0]
+
+    if conv.bias is not None:
+        output += conv.bias.view(1, -1, 1, 1)
+
+    return output
+
+
 class BNAndPadLayer(nn.Module):
     def __init__(
         self,
@@ -233,6 +301,7 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         self.scale = 0.125
 
         self.head_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend="cupy")
+        self._event_conv_test_done = False
 
         self.q_conv = nn.Sequential(RepConv(dim, dim, bias=False), nn.BatchNorm2d(dim))
 
@@ -259,26 +328,37 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         N = H * W
 
         x = self.head_lif(x)
-        # Measure firing rate of head_lif output: fraction of non-zero (spikes)
-        try:
-            firing_rate = (x != 0).float().mean()
-            # store last firing rate as a CPU tensor and append to simple log list
-            self.last_head_lif_firing_rate = firing_rate.detach().cpu()
-            if not hasattr(self, "head_lif_firing_rate_log"):
-                self.head_lif_firing_rate_log = []
-            # append scalar float
-            self.head_lif_firing_rate_log.append(float(self.last_head_lif_firing_rate.item()))
-            # quick console output for inspection
-            print(f"[MS_Attention] head_lif firing rate (fraction): {self.last_head_lif_firing_rate.item():.4f}")
-            with torch.no_grad():
-                print(torch.unique(x))
-        except Exception:
-            # don't break forward pass if logging fails
-            pass
+        x_flat = x.flatten(0, 1)
 
-        q = self.q_conv(x.flatten(0, 1)).reshape(T, B, C, H, W)
-        k = self.k_conv(x.flatten(0, 1)).reshape(T, B, C, H, W)
-        v = self.v_conv(x.flatten(0, 1)).reshape(T, B, C, H, W)
+        if not self._event_conv_test_done:
+            with torch.no_grad():
+                q_repconv = self.q_conv[0]
+                q_first_conv = q_repconv.body[0]
+
+                dense_output = q_first_conv(x_flat)
+                event_output = event_pointwise_conv_reference(
+                    x_flat,
+                    q_first_conv,
+                )
+
+                error = (dense_output - event_output).abs()
+                max_error = error.max().item()
+                mean_error = error.mean().item()
+                allclose = torch.allclose(
+                    dense_output,
+                    event_output,
+                    atol=1e-5,
+                    rtol=1e-5,
+                )
+                print(
+                    f"[Q first 1x1] max_error={max_error}, mean_error={mean_error}, allclose={allclose}"
+                )
+
+            self._event_conv_test_done = True
+
+        q = self.q_conv(x_flat).reshape(T, B, C, H, W)
+        k = self.k_conv(x_flat).reshape(T, B, C, H, W)
+        v = self.v_conv(x_flat).reshape(T, B, C, H, W)
 
         q = self.q_lif(q).flatten(3)
         q = (
