@@ -67,15 +67,16 @@ def event_pointwise_conv_reference(x, conv):
             f"x and conv.weight must be on the same device, got {x.device} and {conv.weight.device}."
         )
 
-    weight = conv.weight.to(dtype=x.dtype)
-    bias = conv.bias.to(dtype=x.dtype) if conv.bias is not None else None
+    x_float = x.float()
+    weight = conv.weight.to(dtype=x_float.dtype)
+    bias = conv.bias.to(dtype=x_float.dtype) if conv.bias is not None else None
 
     output = torch.zeros(
         (x.shape[0], conv.out_channels, x.shape[2], x.shape[3]),
         device=x.device,
-        dtype=x.dtype,
+        dtype=x_float.dtype,
     )
-    events = torch.nonzero(x, as_tuple=False)
+    events = torch.nonzero(x_float, as_tuple=False)
 
     for event in events:
         batch_idx, channel_in_idx, row_idx, col_idx = event.tolist()
@@ -338,9 +339,9 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
                 q_repconv = self.q_conv[0]
                 q_first_conv = q_repconv.body[0]
 
-                dense_output = q_first_conv(x_flat)
+                dense_output = q_first_conv(x_flat.float())
                 event_output = event_pointwise_conv_reference(
-                    x_flat,
+                    x_flat.float(),
                     q_first_conv,
                 )
 
