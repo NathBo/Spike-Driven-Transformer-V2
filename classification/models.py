@@ -16,6 +16,46 @@ from functools import partial
 import os
 
 
+def _save_event_conv_error_plot(stats, save_path=None):
+    """Save a small bar chart of reference-convolution errors per module.
+
+    The plot is intended for temporary debugging and uses a non-interactive
+    matplotlib backend so it can be saved safely in headless environments.
+    """
+    if save_path is None:
+        save_path = os.path.join(os.path.dirname(__file__), "event_conv_error.png")
+
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return None
+
+    if not stats:
+        return None
+
+    labels = [f"module_{entry['module_id']}" for entry in stats]
+    max_errors = [entry["max_error"] for entry in stats]
+    mean_errors = [entry["mean_error"] for entry in stats]
+
+    fig, ax = plt.subplots(figsize=(max(6, len(stats) * 1.2), 3.2))
+    x = range(len(labels))
+    ax.bar([i - 0.18 for i in x], max_errors, width=0.35, label="max_error")
+    ax.bar([i + 0.18 for i in x], mean_errors, width=0.35, label="mean_error")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(labels, rotation=20, ha="right")
+    ax.set_ylabel("error")
+    ax.set_title("Event 1x1 conv reference error by module")
+    ax.legend()
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150)
+    plt.close(fig)
+    return save_path
+
+
 def event_pointwise_conv_reference(x, conv):
     """Reference implementation for a 1x1 event-wise convolution.
 
@@ -286,6 +326,9 @@ class MS_MLP(nn.Module):
 
 
 class MS_Attention_RepConv_qkv_id(nn.Module):
+    _event_conv_error_stats = []
+    _event_conv_error_counter = 0
+
     def __init__(
         self,
         dim,
@@ -306,6 +349,8 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
 
         self.head_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend="cupy")
         self._event_conv_test_done = False
+        self._module_id = MS_Attention_RepConv_qkv_id._event_conv_error_counter
+        MS_Attention_RepConv_qkv_id._event_conv_error_counter += 1
 
         self.q_conv = nn.Sequential(RepConv(dim, dim, bias=False), nn.BatchNorm2d(dim))
 
@@ -358,6 +403,17 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
                 )
                 print(
                     f"[Q first 1x1] max_error={max_error}, mean_error={mean_error}, allclose={allclose}"
+                )
+
+                MS_Attention_RepConv_qkv_id._event_conv_error_stats.append(
+                    {
+                        "module_id": self._module_id,
+                        "max_error": max_error,
+                        "mean_error": mean_error,
+                    }
+                )
+                _save_event_conv_error_plot(
+                    MS_Attention_RepConv_qkv_id._event_conv_error_stats
                 )
 
             self._event_conv_test_done = True
