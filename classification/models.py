@@ -67,19 +67,22 @@ def event_pointwise_conv_reference(x, conv):
             f"x and conv.weight must be on the same device, got {x.device} and {conv.weight.device}."
         )
 
+    weight = conv.weight.to(dtype=x.dtype)
+    bias = conv.bias.to(dtype=x.dtype) if conv.bias is not None else None
+
     output = torch.zeros(
         (x.shape[0], conv.out_channels, x.shape[2], x.shape[3]),
         device=x.device,
-        dtype=conv.weight.dtype,
+        dtype=x.dtype,
     )
     events = torch.nonzero(x, as_tuple=False)
 
     for event in events:
         batch_idx, channel_in_idx, row_idx, col_idx = event.tolist()
-        output[batch_idx, :, row_idx, col_idx] += conv.weight[:, channel_in_idx, 0, 0]
+        output[batch_idx, :, row_idx, col_idx] += weight[:, channel_in_idx, 0, 0]
 
-    if conv.bias is not None:
-        output += conv.bias.view(1, -1, 1, 1)
+    if bias is not None:
+        output += bias.view(1, -1, 1, 1)
 
     return output
 
