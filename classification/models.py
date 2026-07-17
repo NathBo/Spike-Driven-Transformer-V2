@@ -270,6 +270,8 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
             self.head_lif_firing_rate_log.append(float(self.last_head_lif_firing_rate.item()))
             # quick console output for inspection
             print(f"[MS_Attention] head_lif firing rate (fraction): {self.last_head_lif_firing_rate.item():.4f}")
+            with torch.no_grad():
+                print(torch.unique(x))
         except Exception:
             # don't break forward pass if logging fails
             pass
