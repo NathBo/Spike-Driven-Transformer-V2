@@ -348,9 +348,11 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
                 error = (dense_output - event_output).abs()
                 max_error = error.max().item()
                 mean_error = error.mean().item()
+                dense_output_cmp = dense_output.float()
+                event_output_cmp = event_output.float()
                 allclose = torch.allclose(
-                    dense_output,
-                    event_output,
+                    dense_output_cmp,
+                    event_output_cmp,
                     atol=1e-5,
                     rtol=1e-5,
                 )
