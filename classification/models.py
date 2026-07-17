@@ -47,6 +47,7 @@ def _save_event_conv_error_plot(stats, save_path=None):
     ax.set_xticks(list(x))
     ax.set_xticklabels(labels, rotation=20, ha="right")
     ax.set_ylabel("error")
+    ax.set_yscale("log")
     ax.set_title("Event 1x1 conv reference error by module")
     ax.legend()
     ax.grid(axis="y", linestyle="--", alpha=0.3)
