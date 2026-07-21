@@ -407,18 +407,24 @@ def main(args):
 
         print("Load pre-trained checkpoint from: %s" % args.finetune)
         checkpoint_model = checkpoint["model"]
-        # state_dict = model.state_dict()
-        # for k in ["head.weight", "head.bias"]:
-        #     if (
-        #         k in checkpoint_model
-        #         and checkpoint_model[k].shape != state_dict[k].shape
-        #     ):
-        #         print(f"Removing key {k} from pretrained checkpoint")
-        #         del checkpoint_model[k]  # T=4注释
 
-        # load pre-trained model
+        state_dict = model.state_dict()
+        missing_keys = []
+        unexpected_keys = []
+        for key in list(checkpoint_model.keys()):
+            if key not in state_dict:
+                unexpected_keys.append(key)
+                del checkpoint_model[key]
+        for key in state_dict.keys():
+            if key not in checkpoint_model:
+                missing_keys.append(key)
+
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
+        if unexpected_keys:
+            print("Ignored unexpected checkpoint keys:", unexpected_keys[:20])
+        if missing_keys:
+            print("Missing model keys:", missing_keys[:20])
 
         # if args.global_pool:
         #     assert set(msg.missing_keys) == {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}

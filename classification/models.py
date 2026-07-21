@@ -146,15 +146,14 @@ class BNAndPadLayer(nn.Module):
         return self.bn.eps
 
 
-class EventPointwiseConv(nn.Module):
+class EventPointwiseConv(nn.Conv2d):
     """Event-driven implementation of a 1x1 pointwise convolution."""
 
     def __init__(self, in_channel, out_channel, bias=False):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channel, out_channel, 1, 1, 0, bias=bias)
+        super().__init__(in_channel, out_channel, 1, 1, 0, bias=bias)
 
     def forward(self, x):
-        return event_pointwise_conv_reference(x, self.conv)
+        return event_pointwise_conv_reference(x, self)
 
 
 class RepConv(nn.Module):
