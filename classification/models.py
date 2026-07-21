@@ -363,13 +363,8 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
                 q_repconv = self.q_conv[0]
                 q_first_conv = q_repconv.body[0]
 
-                if isinstance(q_first_conv, EventPointwiseConv):
-                    base_conv = q_first_conv.conv
-                    event_output = q_first_conv(x_flat)
-                    dense_output = event_pointwise_conv_reference(x_flat, base_conv)
-                else:
-                    dense_output = q_first_conv(x_flat)
-                    event_output = event_pointwise_conv_reference(x_flat, q_first_conv)
+                dense_output = q_first_conv(x_flat)
+                event_output = event_pointwise_conv_reference(x_flat, q_first_conv)
 
                 error = (dense_output - event_output).abs()
                 max_error = error.max().item()
