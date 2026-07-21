@@ -146,16 +146,31 @@ class BNAndPadLayer(nn.Module):
         return self.bn.eps
 
 
+class EventPointwiseConv(nn.Module):
+    """Event-driven implementation of a 1x1 pointwise convolution."""
+
+    def __init__(self, in_channel, out_channel, bias=False):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channel, out_channel, 1, 1, 0, bias=bias)
+
+    def forward(self, x):
+        return event_pointwise_conv_reference(x, self.conv)
+
+
 class RepConv(nn.Module):
     def __init__(
         self,
         in_channel,
         out_channel,
         bias=False,
+        event_pointwise=False,
     ):
         super().__init__()
         # hidden_channel = in_channel
-        conv1x1 = nn.Conv2d(in_channel, in_channel, 1, 1, 0, bias=False, groups=1)
+        if event_pointwise:
+            conv1x1 = EventPointwiseConv(in_channel, in_channel, bias=False)
+        else:
+            conv1x1 = nn.Conv2d(in_channel, in_channel, 1, 1, 0, bias=False, groups=1)
         bn = BNAndPadLayer(pad_pixels=1, num_features=in_channel)
         conv3x3 = nn.Sequential(
             nn.Conv2d(in_channel, in_channel, 3, 1, 0, groups=in_channel, bias=False),
@@ -294,6 +309,7 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         attn_drop=0.0,
         proj_drop=0.0,
         sr_ratio=1,
+        event_pointwise=False,
     ):
         super().__init__()
         assert (
@@ -306,11 +322,20 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         self.head_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend="cupy")
         self._event_conv_test_done = False
 
-        self.q_conv = nn.Sequential(RepConv(dim, dim, bias=False), nn.BatchNorm2d(dim))
+        self.q_conv = nn.Sequential(
+            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
+            nn.BatchNorm2d(dim),
+        )
 
-        self.k_conv = nn.Sequential(RepConv(dim, dim, bias=False), nn.BatchNorm2d(dim))
+        self.k_conv = nn.Sequential(
+            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
+            nn.BatchNorm2d(dim),
+        )
 
-        self.v_conv = nn.Sequential(RepConv(dim, dim, bias=False), nn.BatchNorm2d(dim))
+        self.v_conv = nn.Sequential(
+            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
+            nn.BatchNorm2d(dim),
+        )
 
         self.q_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend="cupy")
 
@@ -323,7 +348,8 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         )
 
         self.proj_conv = nn.Sequential(
-            RepConv(dim, dim, bias=False), nn.BatchNorm2d(dim)
+            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
+            nn.BatchNorm2d(dim),
         )
 
     def forward(self, x):
@@ -338,11 +364,13 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
                 q_repconv = self.q_conv[0]
                 q_first_conv = q_repconv.body[0]
 
-                dense_output = q_first_conv(x_flat)
-                event_output = event_pointwise_conv_reference(
-                    x_flat,
-                    q_first_conv,
-                )
+                if isinstance(q_first_conv, EventPointwiseConv):
+                    base_conv = q_first_conv.conv
+                    event_output = q_first_conv(x_flat)
+                    dense_output = event_pointwise_conv_reference(x_flat, base_conv)
+                else:
+                    dense_output = q_first_conv(x_flat)
+                    event_output = event_pointwise_conv_reference(x_flat, q_first_conv)
 
                 error = (dense_output - event_output).abs()
                 max_error = error.max().item()
@@ -412,6 +440,7 @@ class MS_Block(nn.Module):
         drop_path=0.0,
         norm_layer=nn.LayerNorm,
         sr_ratio=1,
+        event_pointwise=False,
     ):
         super().__init__()
 
@@ -423,6 +452,7 @@ class MS_Block(nn.Module):
             attn_drop=attn_drop,
             proj_drop=drop,
             sr_ratio=sr_ratio,
+            event_pointwise=event_pointwise,
         )
 
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
@@ -494,6 +524,7 @@ class Spiking_vit_MetaFormer(nn.Module):
         depths=[6, 8, 6],
         sr_ratios=[8, 4, 2],
         kd=False,
+        event_pointwise=False,
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -570,6 +601,7 @@ class Spiking_vit_MetaFormer(nn.Module):
                     drop_path=dpr[j],
                     norm_layer=norm_layer,
                     sr_ratio=sr_ratios,
+                    event_pointwise=event_pointwise,
                 )
                 for j in range(6)
             ]
@@ -597,6 +629,7 @@ class Spiking_vit_MetaFormer(nn.Module):
                     drop_path=dpr[j],
                     norm_layer=norm_layer,
                     sr_ratio=sr_ratios,
+                    event_pointwise=event_pointwise,
                 )
                 for j in range(2)
             ]

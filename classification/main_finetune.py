@@ -255,6 +255,12 @@ def get_args_parser():
     )
     parser.add_argument("--eval", action="store_true", help="Perform evaluation only")
     parser.add_argument(
+        "--event_pointwise",
+        action="store_true",
+        default=False,
+        help="Replace the first 1x1 conv in RepConv with event-driven implementation",
+    )
+    parser.add_argument(
         "--dist_eval",
         action="store_true",
         default=False,
@@ -387,7 +393,11 @@ def main(args):
         )
 
     if args.model_mode == "ms":
-        model = models.__dict__[args.model](kd=args.kd, num_classes=args.nb_classes)
+        model = models.__dict__[args.model](
+            kd=args.kd,
+            num_classes=args.nb_classes,
+            event_pointwise=args.event_pointwise,
+        )
     elif args.model_mode == "sew":
         model = models.__dict__[args.model]()
     model.T = args.time_steps
