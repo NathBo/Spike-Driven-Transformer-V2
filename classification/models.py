@@ -358,29 +358,6 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         x = self.head_lif(x)
         x_flat = x.flatten(0, 1)
 
-        if not self._event_conv_test_done:
-            with torch.no_grad():
-                q_repconv = self.q_conv[0]
-                q_first_conv = q_repconv.body[0]
-
-                dense_output = q_first_conv(x_flat)
-                event_output = event_pointwise_conv_reference(x_flat, q_first_conv)
-
-                error = (dense_output - event_output).abs()
-                max_error = error.max().item()
-                mean_error = error.mean().item()
-                allclose = torch.allclose(
-                    dense_output,
-                    event_output,
-                    atol=1e-5,
-                    rtol=1e-5,
-                )
-                print(
-                    f"[Q first 1x1] max_error={max_error}, mean_error={mean_error}, allclose={allclose}"
-                )
-
-            self._event_conv_test_done = True
-
         q = self.q_conv(x_flat).reshape(T, B, C, H, W)
         k = self.k_conv(x_flat).reshape(T, B, C, H, W)
         v = self.v_conv(x_flat).reshape(T, B, C, H, W)
