@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=flowers_finetune
+#SBATCH --job-name=imagenet_finetune
 #SBATCH --output=output_%j.log
 #SBATCH --error=error_%j.log
 #SBATCH --ntasks=1
