@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8       # Vu que tu as mis --num_workers 8
 #SBATCH --gres=gpu:a100_3g.40gb:1            # C'EST CETTE LIGNE QUI MANQUAIT !
-#SBATCH --time=12:00:00         # Ajuste le temps selon tes besoins
+#SBATCH --time=150:00:00         # Ajuste le temps selon tes besoins
 source ../venv/bin/activate
 module load cuda/11.1 python/anaconda3
 export MASTER_ADDR=127.0.0.1
