@@ -6,6 +6,8 @@ srun python -m torch.distributed.run --nproc_per_node=1 --master_addr=127.0.0.1 
 
 srun python -m torch.distributed.run --nproc_per_node=1 --master_addr=127.0.0.1 --master_port=29500 main_finetune.py --batch_size 32 --model metaspikformer_8_512 --data_path flowers102_imagenet_like/ --eval --resume outputs/55M/checkpoint-2243.pth --output_dir outputs/trash --nb_classes 102
 
+sbatch flowers_train.sh
+
 # ajuster nproc_per_node en fonction de ce qu'on a de dispo
 
 
