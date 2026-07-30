@@ -320,6 +320,11 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
 
         self.head_lif = MultiStepLIFNode(tau=2.0, detach_reset=True, backend="cupy")
         self._event_conv_test_done = False
+        self._firing_rate_tracking_enabled = False
+        self._firing_rate_tracking_every = 4
+        self._firing_rate_tracking_counter = 0
+        self._firing_rate_tracking_verbose = False
+        self._firing_rate_tracking_max_samples = 64
 
         self.q_conv = nn.Sequential(
             RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
@@ -351,11 +356,33 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
             nn.BatchNorm2d(dim),
         )
 
+    def set_firing_rate_tracking(self, enabled=True, every=4, verbose=False):
+        self._firing_rate_tracking_enabled = bool(enabled)
+        self._firing_rate_tracking_every = max(1, int(every))
+        self._firing_rate_tracking_verbose = bool(verbose)
+        if not self._firing_rate_tracking_enabled:
+            self._firing_rate_tracking_counter = 0
+
     def forward(self, x):
         T, B, C, H, W = x.shape
         N = H * W
 
         x = self.head_lif(x)
+
+        if self._firing_rate_tracking_enabled:
+            self._firing_rate_tracking_counter += 1
+            if self._firing_rate_tracking_counter % self._firing_rate_tracking_every == 0:
+                with torch.no_grad():
+                    fr = (x != 0).to(torch.float32).mean()
+                    self.last_head_lif_firing_rate = fr.detach().cpu()
+                    if not hasattr(self, "head_lif_firing_rate_log"):
+                        self.head_lif_firing_rate_log = []
+                    self.head_lif_firing_rate_log.append(float(self.last_head_lif_firing_rate.item()))
+                    if len(self.head_lif_firing_rate_log) > self._firing_rate_tracking_max_samples:
+                        self.head_lif_firing_rate_log = self.head_lif_firing_rate_log[-self._firing_rate_tracking_max_samples:]
+                    if self._firing_rate_tracking_verbose:
+                        print(f"[MS_Attention] head_lif firing rate (fraction): {self.last_head_lif_firing_rate.item():.4f}")
+
         x_flat = x.flatten(0, 1)
 
         q = self.q_conv(x_flat).reshape(T, B, C, H, W)
