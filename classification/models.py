@@ -72,7 +72,12 @@ def event_pointwise_conv_reference(x, conv):
 
     B, C, H, W = x.shape
     x_flat = x.reshape(B, C, H * W)
-    out_flat = torch.matmul(weight, x_flat)
+
+    # Preserve event-driven semantics: only non-zero spike events are encoded in the sparse input.
+    x_sparse = x_flat.permute(0, 2, 1).reshape(B * H * W, C).to_sparse()
+    out_flat = torch.sparse.mm(x_sparse, weight.t())
+    out_flat = out_flat.view(B, H * W, conv.out_channels).permute(0, 2, 1)
+
     if bias is not None:
         out_flat += bias.view(1, -1, 1)
 
