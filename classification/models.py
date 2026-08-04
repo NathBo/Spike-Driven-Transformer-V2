@@ -390,33 +390,18 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         v = self.v_conv(x_flat).reshape(T, B, C, H, W)
 
         q = self.q_lif(q).flatten(3)
-        q = (
-            q.transpose(-1, -2)
-            .reshape(T, B, N, self.num_heads, C // self.num_heads)
-            .permute(0, 1, 3, 2, 4)
-            .contiguous()
-        )
+        q = q.reshape(T, B, self.num_heads, C // self.num_heads, N).permute(0, 1, 2, 4, 3)
 
         k = self.k_lif(k).flatten(3)
-        k = (
-            k.transpose(-1, -2)
-            .reshape(T, B, N, self.num_heads, C // self.num_heads)
-            .permute(0, 1, 3, 2, 4)
-            .contiguous()
-        )
+        k = k.reshape(T, B, self.num_heads, C // self.num_heads, N).permute(0, 1, 2, 4, 3)
 
         v = self.v_lif(v).flatten(3)
-        v = (
-            v.transpose(-1, -2)
-            .reshape(T, B, N, self.num_heads, C // self.num_heads)
-            .permute(0, 1, 3, 2, 4)
-            .contiguous()
-        )
+        v = v.reshape(T, B, self.num_heads, C // self.num_heads, N).permute(0, 1, 2, 4, 3)
 
         x = k.transpose(-2, -1) @ v
         x = (q @ x) * self.scale
 
-        x = x.transpose(3, 4).reshape(T, B, C, N).contiguous()
+        x = x.permute(0, 1, 2, 4, 3).reshape(T, B, C, N)
         x = self.attn_lif(x).reshape(T, B, C, H, W)
         x = x.reshape(T, B, C, H, W)
         x = x.flatten(0, 1)

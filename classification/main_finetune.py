@@ -509,19 +509,10 @@ def main(args):
     )
 
     if args.eval:
-        for module in model_without_ddp.modules():
-            if isinstance(module, models.MS_Attention_RepConv_qkv_id):
-                module.set_firing_rate_tracking(enabled=True, every=4, verbose=False)
-
         test_stats = evaluate(data_loader_val, model, device)
         print(
             f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%"
         )
-
-        try:
-            models.plot_firing_rate_by_block(model_without_ddp, out_dir="graphics")
-        except Exception as e:
-            print("Failed to generate firing rate plot:", e)
 
         exit(0)
 
