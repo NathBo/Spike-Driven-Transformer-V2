@@ -67,18 +67,25 @@ def event_pointwise_conv_reference(x, conv):
             f"x and conv.weight must be on the same device, got {x.device} and {conv.weight.device}."
         )
 
-    weight = conv.weight.to(dtype=x.dtype).view(conv.out_channels, conv.in_channels)
-    bias = conv.bias.to(dtype=x.dtype) if conv.bias is not None else None
+    weight = conv.weight.view(conv.out_channels, conv.in_channels)
+    bias = conv.bias if conv.bias is not None else None
 
     B, C, H, W = x.shape
     x_flat = x.reshape(B, C, H * W)
 
     # Preserve event-driven semantics: only non-zero spike events are encoded in the sparse input.
     x_sparse = x_flat.permute(0, 2, 1).reshape(B * H * W, C).to_sparse()
-    out_flat = torch.sparse.mm(x_sparse, weight.t())
+
+    mm_dtype = x.dtype if x.dtype in (torch.float32, torch.float64) else torch.float32
+    x_sparse = x_sparse.to(dtype=mm_dtype)
+    weight_mm = weight.to(device=x.device, dtype=mm_dtype)
+
+    out_flat = torch.sparse.mm(x_sparse, weight_mm.t())
+    out_flat = out_flat.to(dtype=x.dtype)
     out_flat = out_flat.view(B, H * W, conv.out_channels).permute(0, 2, 1)
 
     if bias is not None:
+        bias = bias.to(dtype=x.dtype)
         out_flat += bias.view(1, -1, 1)
 
     return out_flat.view(B, conv.out_channels, H, W)
