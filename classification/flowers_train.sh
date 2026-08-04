@@ -13,4 +13,4 @@ export MASTER_PORT=29500
 export WORLD_SIZE=1
 export RANK=0
 export LOCAL_RANK=0
-srun python -m torch.distributed.run --nproc_per_node=1 --master_addr=127.0.0.1 --master_port=29500 main_finetune.py --batch_size 32 --blr 6e-4 --warmup_epochs 10 --epochs 5000 --model metaspikformer_8_512 --data_path flowers102_imagenet_like/ --output_dir outputs/55M --log_dir outputs/55M--model_mode ms --dist_eval --num_workers 8 --nb_classes 102
+srun python -m torch.distributed.run --nproc_per_node=1 --master_addr=127.0.0.1 --master_port=29500 main_finetune.py --batch_size 32 --blr 6e-4 --warmup_epochs 10 --epochs 5000 --model metaspikformer_8_512 --data_path flowers102_imagenet_like/ --output_dir outputs/55M --log_dir outputs/55Mflowers --model_mode ms --dist_eval --num_workers 8 --nb_classes 102
