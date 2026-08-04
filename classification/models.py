@@ -67,28 +67,27 @@ def event_pointwise_conv_reference(x, conv):
             f"x and conv.weight must be on the same device, got {x.device} and {conv.weight.device}."
         )
 
-    weight = conv.weight.view(conv.out_channels, conv.in_channels)
-    bias = conv.bias if conv.bias is not None else None
+    weight = conv.weight.to(dtype=x.dtype, device=x.device).view(conv.out_channels, conv.in_channels)
+    bias = conv.bias.to(dtype=x.dtype, device=x.device) if conv.bias is not None else None
 
     B, C, H, W = x.shape
     x_flat = x.reshape(B, C, H * W)
+    x_pos = x_flat.permute(0, 2, 1)
 
-    # Preserve event-driven semantics: only non-zero spike events are encoded in the sparse input.
-    x_sparse = x_flat.permute(0, 2, 1).reshape(B * H * W, C).to_sparse()
-
-    mm_dtype = x.dtype if x.dtype in (torch.float32, torch.float64) else torch.float32
-    x_sparse = x_sparse.to(dtype=mm_dtype)
-    weight_mm = weight.to(device=x.device, dtype=mm_dtype)
-
-    out_flat = torch.sparse.mm(x_sparse, weight_mm.t())
-    out_flat = out_flat.to(dtype=x.dtype)
-    out_flat = out_flat.view(B, H * W, conv.out_channels).permute(0, 2, 1)
+    # Preserve event-driven semantics by computing output only at active spatial positions.
+    active_pos = x_pos.any(dim=-1)
+    if not active_pos.any():
+        out_flat = torch.zeros(B, H * W, conv.out_channels, dtype=x.dtype, device=x.device)
+    else:
+        x_active = x_pos[active_pos]
+        out_active = x_active.matmul(weight.t())
+        out_flat = torch.zeros(B, H * W, conv.out_channels, dtype=x.dtype, device=x.device)
+        out_flat[active_pos] = out_active
 
     if bias is not None:
-        bias = bias.to(dtype=x.dtype)
-        out_flat += bias.view(1, -1, 1)
+        out_flat += bias.view(1, 1, -1)
 
-    return out_flat.view(B, conv.out_channels, H, W)
+    return out_flat.permute(0, 2, 1).view(B, conv.out_channels, H, W)
 
 
 class BNAndPadLayer(nn.Module):
