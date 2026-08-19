@@ -154,9 +154,22 @@ class EventPointwiseConv(nn.Conv2d):
 
     def __init__(self, in_channel, out_channel, bias=False):
         super().__init__(in_channel, out_channel, 1, 1, 0, bias=bias)
+        self.event_total_positions = 0
+        self.event_active_positions = 0
+        self.event_calls = 0
 
     def forward(self, x):
+        with torch.no_grad():
+            positions = x.any(dim=1).flatten()
+            self.event_total_positions += int(positions.numel())
+            self.event_active_positions += int(positions.sum().item())
+            self.event_calls += 1
         return event_pointwise_conv_reference(x, self)
+
+    def reset_event_stats(self):
+        self.event_total_positions = 0
+        self.event_active_positions = 0
+        self.event_calls = 0
 
 
 class RepConv(nn.Module):
