@@ -14,6 +14,10 @@ from spikingjelly.clock_driven import functional
 from util.datasets import build_dataset
 
 
+def log(message):
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
+
+
 def build_args():
     parser = argparse.ArgumentParser(description="Measure dense/event-driven SDT metrics")
     parser.add_argument("--data_path", required=True)
@@ -45,6 +49,7 @@ def dataset_args(args):
 
 
 def load_model(args, mode, device):
+    log(f"Chargement du modele: {mode}")
     model = models.__dict__[args.model](
         kd=False,
         num_classes=args.nb_classes,
@@ -56,7 +61,9 @@ def load_model(args, mode, device):
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     state_dict = checkpoint.get("model", checkpoint)
     model.load_state_dict(state_dict, strict=False)
-    return model.to(device).eval()
+    model = model.to(device).eval()
+    log(f"Modele pret: {mode}")
+    return model
 
 
 def reset_model(model):
@@ -117,11 +124,13 @@ def collect_event_hooks(model):
     return errors, handles
 
 
-def accuracy_pass(model, loader, device, max_batches):
+def accuracy_pass(model, loader, device, max_batches, label):
     model.eval()
     correct1 = 0
     correct5 = 0
     total = 0
+    total_batches = len(loader) if not max_batches else min(len(loader), max_batches)
+    log(f"Debut accuracy {label}: {total_batches} batches")
     for batch_index, (images, targets) in enumerate(loader):
         if max_batches and batch_index >= max_batches:
             break
@@ -134,24 +143,32 @@ def accuracy_pass(model, loader, device, max_batches):
         correct5 += int((topk == targets[:, None]).any(dim=1).sum().item())
         total += targets.numel()
         reset_model(model)
+        log(f"Accuracy {label}: batch {batch_index + 1}/{total_batches}")
+    log(f"Fin accuracy {label}: Top-1={100.0 * correct1 / total:.3f}% Top-5={100.0 * correct5 / total:.3f}%")
     return {"top1": 100.0 * correct1 / total, "top5": 100.0 * correct5 / total, "samples": total}
 
 
-def timed_forward(model, sample, args):
-    for _ in range(args.warmup):
+def timed_forward(model, sample, args, label):
+    log(f"Debut warmup {label}: {args.warmup} forwards")
+    for iteration in range(args.warmup):
         with torch.no_grad():
             model(sample)
         reset_model(model)
+        log(f"Warmup {label}: {iteration + 1}/{args.warmup}")
     if sample.is_cuda:
         torch.cuda.synchronize(sample.device)
+    log(f"Debut timing {label}: {args.iters} forwards")
     start = time.perf_counter()
-    for _ in range(args.iters):
+    for iteration in range(args.iters):
         with torch.no_grad():
             model(sample)
         reset_model(model)
+        log(f"Timing {label}: {iteration + 1}/{args.iters}")
     if sample.is_cuda:
         torch.cuda.synchronize(sample.device)
-    return (time.perf_counter() - start) * 1000.0 / args.iters
+    average_ms = (time.perf_counter() - start) * 1000.0 / args.iters
+    log(f"Fin timing {label}: {average_ms:.3f} ms/forward")
+    return average_ms
 
 
 def event_metrics(model):
@@ -198,10 +215,12 @@ def global_firing_rate(rates):
 
 def main():
     args = build_args()
+    log("Demarrage de la mesure")
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but unavailable")
 
+    log("Chargement du dataset de validation")
     data = build_dataset(False, dataset_args(args))
     loader = DataLoader(
         data,
@@ -210,6 +229,7 @@ def main():
         num_workers=args.num_workers,
         pin_memory=device.type == "cuda",
     )
+    log(f"Dataset pret: {len(data)} images, {len(loader)} batches")
 
     results = {"configuration": vars(args)}
     dense_model = load_model(args, "dense", device)
@@ -223,13 +243,13 @@ def main():
     channel_errors, channel_error_handles = collect_event_hooks(channel_model)
 
     results["accuracy_dense"] = accuracy_pass(
-        dense_model, loader, device, args.max_eval_batches
+        dense_model, loader, device, args.max_eval_batches, "dense"
     )
     results["accuracy_spatial_sparse"] = accuracy_pass(
-        spatial_model, loader, device, args.max_eval_batches
+        spatial_model, loader, device, args.max_eval_batches, "spatial_sparse"
     )
     results["accuracy_channel_sparse"] = accuracy_pass(
-        channel_model, loader, device, args.max_eval_batches
+        channel_model, loader, device, args.max_eval_batches, "channel_sparse"
     )
 
     results["firing_rate_dense_by_attention"] = {
@@ -264,9 +284,13 @@ def main():
 
     sample, _ = next(iter(loader))
     sample = sample.to(device, non_blocking=True)
-    results["time_ms_dense"] = timed_forward(dense_model, sample, args)
-    results["time_ms_spatial_sparse"] = timed_forward(spatial_model, sample, args)
-    results["time_ms_channel_sparse"] = timed_forward(channel_model, sample, args)
+    results["time_ms_dense"] = timed_forward(dense_model, sample, args, "dense")
+    results["time_ms_spatial_sparse"] = timed_forward(
+        spatial_model, sample, args, "spatial_sparse"
+    )
+    results["time_ms_channel_sparse"] = timed_forward(
+        channel_model, sample, args, "channel_sparse"
+    )
 
     for handle in (
         dense_rate_handles + spatial_rate_handles + channel_rate_handles
@@ -291,6 +315,7 @@ def main():
 
     with open(args.output, "w", encoding="utf-8") as output_file:
         json.dump(results, output_file, indent=2)
+    log(f"Mesure terminee, resultats ecrits dans {args.output}")
     print(json.dumps(results, indent=2))
 
 
