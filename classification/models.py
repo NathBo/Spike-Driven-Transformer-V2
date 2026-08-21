@@ -90,6 +90,27 @@ def event_pointwise_conv_reference(x, conv):
     return out_flat.permute(0, 2, 1).view(B, conv.out_channels, H, W)
 
 
+def channel_sparse_pointwise_conv_reference(x, conv):
+    """Apply a 1x1 convolution by accumulating only non-zero channels."""
+    B, C, H, W = x.shape
+    if C != conv.in_channels:
+        raise ValueError(f"x channels ({C}) do not match conv.in_channels ({conv.in_channels}).")
+
+    x_positions = x.permute(0, 2, 3, 1).reshape(-1, C)
+    position_indices, channel_indices = torch.nonzero(x_positions, as_tuple=True)
+    weight = conv.weight.reshape(conv.out_channels, C)
+    output = torch.zeros(
+        x_positions.shape[0], conv.out_channels, dtype=x.dtype, device=x.device
+    )
+    if position_indices.numel() > 0:
+        contributions = x_positions[position_indices, channel_indices].unsqueeze(1)
+        contributions = contributions * weight[:, channel_indices].transpose(0, 1)
+        output.index_add_(0, position_indices, contributions)
+    if conv.bias is not None:
+        output += conv.bias.view(1, -1)
+    return output.reshape(B, H, W, conv.out_channels).permute(0, 3, 1, 2)
+
+
 class BNAndPadLayer(nn.Module):
     def __init__(
         self,
@@ -172,6 +193,31 @@ class EventPointwiseConv(nn.Conv2d):
         self.event_calls = 0
 
 
+class ChannelSparsePointwiseConv(nn.Conv2d):
+    """1x1 convolution that accumulates only non-zero input channels."""
+
+    def __init__(self, in_channel, out_channel, bias=False):
+        super().__init__(in_channel, out_channel, 1, 1, 0, bias=bias)
+        self.channel_total = 0
+        self.channel_active = 0
+        self.channel_positions = 0
+        self.channel_calls = 0
+
+    def forward(self, x):
+        with torch.no_grad():
+            self.channel_total += x.numel()
+            self.channel_active += int(torch.count_nonzero(x).item())
+            self.channel_positions += x.shape[0] * x.shape[2] * x.shape[3]
+            self.channel_calls += 1
+        return channel_sparse_pointwise_conv_reference(x, self)
+
+    def reset_event_stats(self):
+        self.channel_total = 0
+        self.channel_active = 0
+        self.channel_positions = 0
+        self.channel_calls = 0
+
+
 class RepConv(nn.Module):
     def __init__(
         self,
@@ -179,10 +225,13 @@ class RepConv(nn.Module):
         out_channel,
         bias=False,
         event_pointwise=False,
+        channel_sparse=False,
     ):
         super().__init__()
         # hidden_channel = in_channel
-        if event_pointwise:
+        if channel_sparse:
+            conv1x1 = ChannelSparsePointwiseConv(in_channel, in_channel, bias=False)
+        elif event_pointwise:
             conv1x1 = EventPointwiseConv(in_channel, in_channel, bias=False)
         else:
             conv1x1 = nn.Conv2d(in_channel, in_channel, 1, 1, 0, bias=False, groups=1)
@@ -325,6 +374,7 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         proj_drop=0.0,
         sr_ratio=1,
         event_pointwise=False,
+        channel_sparse=False,
     ):
         super().__init__()
         assert (
@@ -343,17 +393,17 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         self._firing_rate_tracking_max_samples = 64
 
         self.q_conv = nn.Sequential(
-            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
+            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise, channel_sparse=channel_sparse),
             nn.BatchNorm2d(dim),
         )
 
         self.k_conv = nn.Sequential(
-            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
+            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise, channel_sparse=channel_sparse),
             nn.BatchNorm2d(dim),
         )
 
         self.v_conv = nn.Sequential(
-            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
+            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise, channel_sparse=channel_sparse),
             nn.BatchNorm2d(dim),
         )
 
@@ -368,7 +418,7 @@ class MS_Attention_RepConv_qkv_id(nn.Module):
         )
 
         self.proj_conv = nn.Sequential(
-            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise),
+            RepConv(dim, dim, bias=False, event_pointwise=event_pointwise, channel_sparse=channel_sparse),
             nn.BatchNorm2d(dim),
         )
 
@@ -440,6 +490,7 @@ class MS_Block(nn.Module):
         norm_layer=nn.LayerNorm,
         sr_ratio=1,
         event_pointwise=False,
+        channel_sparse=False,
     ):
         super().__init__()
 
@@ -452,6 +503,7 @@ class MS_Block(nn.Module):
             proj_drop=drop,
             sr_ratio=sr_ratio,
             event_pointwise=event_pointwise,
+            channel_sparse=channel_sparse,
         )
 
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
@@ -524,6 +576,7 @@ class Spiking_vit_MetaFormer(nn.Module):
         sr_ratios=[8, 4, 2],
         kd=False,
         event_pointwise=False,
+        channel_sparse=False,
     ):
         super().__init__()
         self.num_classes = num_classes
@@ -601,6 +654,7 @@ class Spiking_vit_MetaFormer(nn.Module):
                     norm_layer=norm_layer,
                     sr_ratio=sr_ratios,
                     event_pointwise=event_pointwise,
+                    channel_sparse=channel_sparse,
                 )
                 for j in range(6)
             ]
@@ -629,6 +683,7 @@ class Spiking_vit_MetaFormer(nn.Module):
                     norm_layer=norm_layer,
                     sr_ratio=sr_ratios,
                     event_pointwise=event_pointwise,
+                    channel_sparse=channel_sparse,
                 )
                 for j in range(2)
             ]

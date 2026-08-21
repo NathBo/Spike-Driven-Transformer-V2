@@ -44,11 +44,12 @@ def dataset_args(args):
     )
 
 
-def load_model(args, event_pointwise, device):
+def load_model(args, mode, device):
     model = models.__dict__[args.model](
         kd=False,
         num_classes=args.nb_classes,
-        event_pointwise=event_pointwise,
+        event_pointwise=mode == "spatial_sparse",
+        channel_sparse=mode == "channel_sparse",
     )
     model.T = args.time_steps
     # Training checkpoints contain argparse.Namespace metadata in addition to weights.
@@ -82,7 +83,7 @@ def collect_event_hooks(model):
     errors = {}
     handles = []
     for index, module in enumerate(model.modules()):
-        if isinstance(module, models.EventPointwiseConv):
+        if isinstance(module, (models.EventPointwiseConv, models.ChannelSparsePointwiseConv)):
             name = f"event_conv_{index}"
             errors[name] = {"max_error": 0.0, "mean_error_sum": 0.0, "samples": 0}
 
@@ -106,6 +107,10 @@ def collect_event_hooks(model):
                     values.setdefault("allclose", True)
                     values["allclose"] = values["allclose"] and torch.allclose(
                         dense, output, atol=1e-5, rtol=1e-5
+                    )
+                    values.setdefault("allclose_relaxed", True)
+                    values["allclose_relaxed"] = values["allclose_relaxed"] and torch.allclose(
+                        dense, output, atol=1e-3, rtol=1e-3
                     )
 
             handles.append(module.register_forward_hook(hook))
@@ -166,6 +171,23 @@ def event_metrics(model):
                 "dense_macs_estimate": dense_ops,
                 "active_macs_estimate": active * module.in_channels * module.out_channels,
             }
+        elif isinstance(module, models.ChannelSparsePointwiseConv):
+            total = module.channel_total
+            active = module.channel_active
+            positions = module.channel_positions
+            dense_ops = total * module.out_channels
+            result[f"event_conv_{index}"] = {
+                "in_channels": module.in_channels,
+                "out_channels": module.out_channels,
+                "total_channel_values": total,
+                "active_channel_values": active,
+                "positions": positions,
+                "mean_active_channels_per_position": active / positions if positions else 0.0,
+                "active_fraction": active / total if total else 0.0,
+                "skipped_fraction": 1.0 - active / total if total else 0.0,
+                "dense_macs_estimate": dense_ops,
+                "active_macs_estimate": active * module.out_channels,
+            }
     return result
 
 
@@ -190,18 +212,24 @@ def main():
     )
 
     results = {"configuration": vars(args)}
-    dense_model = load_model(args, False, device)
-    event_model = load_model(args, True, device)
+    dense_model = load_model(args, "dense", device)
+    spatial_model = load_model(args, "spatial_sparse", device)
+    channel_model = load_model(args, "channel_sparse", device)
 
     dense_rates, dense_rate_handles = collect_firing_rate_hooks(dense_model)
-    event_rates, event_rate_handles = collect_firing_rate_hooks(event_model)
-    event_errors, event_error_handles = collect_event_hooks(event_model)
+    spatial_rates, spatial_rate_handles = collect_firing_rate_hooks(spatial_model)
+    channel_rates, channel_rate_handles = collect_firing_rate_hooks(channel_model)
+    spatial_errors, spatial_error_handles = collect_event_hooks(spatial_model)
+    channel_errors, channel_error_handles = collect_event_hooks(channel_model)
 
     results["accuracy_dense"] = accuracy_pass(
         dense_model, loader, device, args.max_eval_batches
     )
-    results["accuracy_event_pointwise"] = accuracy_pass(
-        event_model, loader, device, args.max_eval_batches
+    results["accuracy_spatial_sparse"] = accuracy_pass(
+        spatial_model, loader, device, args.max_eval_batches
+    )
+    results["accuracy_channel_sparse"] = accuracy_pass(
+        channel_model, loader, device, args.max_eval_batches
     )
 
     results["firing_rate_dense_by_attention"] = {
@@ -209,36 +237,57 @@ def main():
         for key, values in dense_rates.items()
         if values
     }
-    results["firing_rate_event_by_attention"] = {
+    results["firing_rate_spatial_by_attention"] = {
         key: {"mean": sum(values) / len(values), "samples": len(values)}
-        for key, values in event_rates.items()
+        for key, values in spatial_rates.items()
+        if values
+    }
+    results["firing_rate_channel_by_attention"] = {
+        key: {"mean": sum(values) / len(values), "samples": len(values)}
+        for key, values in channel_rates.items()
         if values
     }
     results["firing_rate_dense_global"] = global_firing_rate(
         results["firing_rate_dense_by_attention"]
     )
-    results["firing_rate_event_global"] = global_firing_rate(
-        results["firing_rate_event_by_attention"]
+    results["firing_rate_spatial_global"] = global_firing_rate(
+        results["firing_rate_spatial_by_attention"]
     )
-    results["event_pointwise_sparsity"] = event_metrics(event_model)
+    results["firing_rate_channel_global"] = global_firing_rate(
+        results["firing_rate_channel_by_attention"]
+    )
+    results["spatial_sparse_stats"] = event_metrics(spatial_model)
+    results["channel_sparse_stats"] = event_metrics(channel_model)
+
+    for handle in spatial_error_handles + channel_error_handles:
+        handle.remove()
 
     sample, _ = next(iter(loader))
     sample = sample.to(device, non_blocking=True)
     results["time_ms_dense"] = timed_forward(dense_model, sample, args)
-    results["time_ms_event_pointwise"] = timed_forward(event_model, sample, args)
+    results["time_ms_spatial_sparse"] = timed_forward(spatial_model, sample, args)
+    results["time_ms_channel_sparse"] = timed_forward(channel_model, sample, args)
 
-    for handle in dense_rate_handles + event_rate_handles + event_error_handles:
+    for handle in (
+        dense_rate_handles + spatial_rate_handles + channel_rate_handles
+        + spatial_error_handles + channel_error_handles
+    ):
         handle.remove()
 
-    event_error_report = {}
-    for key, values in event_errors.items():
-        samples = values["samples"]
-        event_error_report[key] = {
-            "max_error": values["max_error"],
-            "mean_error": values["mean_error_sum"] / samples if samples else 0.0,
-            "allclose": values.get("allclose", False),
+    def error_report(errors):
+        return {
+            key: {
+                "max_error": values["max_error"],
+                "mean_error": values["mean_error_sum"] / values["samples"]
+                if values["samples"] else 0.0,
+                "allclose": values.get("allclose", False),
+                "allclose_relaxed": values.get("allclose_relaxed", False),
+            }
+            for key, values in errors.items()
         }
-    results["event_pointwise_validation"] = event_error_report
+
+    results["spatial_sparse_validation"] = error_report(spatial_errors)
+    results["channel_sparse_validation"] = error_report(channel_errors)
 
     with open(args.output, "w", encoding="utf-8") as output_file:
         json.dump(results, output_file, indent=2)
