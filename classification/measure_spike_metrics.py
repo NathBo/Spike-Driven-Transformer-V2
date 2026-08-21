@@ -51,7 +51,8 @@ def load_model(args, event_pointwise, device):
         event_pointwise=event_pointwise,
     )
     model.T = args.time_steps
-    checkpoint = torch.load(args.checkpoint, map_location="cpu")
+    # Training checkpoints contain argparse.Namespace metadata in addition to weights.
+    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     state_dict = checkpoint.get("model", checkpoint)
     model.load_state_dict(state_dict, strict=False)
     return model.to(device).eval()

@@ -8,6 +8,8 @@ srun python -m torch.distributed.run --nproc_per_node=1 --master_addr=127.0.0.1 
 
 sbatch flowers_train.sh
 
+python measure_spike_metrics.py --data_path flowers102_imagenet_like/ --checkpoint outputs\55M\checkpoint-6080.pth --model metaspikformer_8_512 --nb_classes 102 --time_steps 4 --batch_size 32 --warmup 10 --iters 50 --output metrics_imagenet.json --device cuda
+
 # ajuster nproc_per_node en fonction de ce qu'on a de dispo
 
 
